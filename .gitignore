@@ -1,2 +1,14 @@
 # Ignore .env
 .env
+
+#windows sctipting
+start.bet
+
+#python crap
+__pycache__/
+music_cache/
+
+
+#git ignore itself
+.gitignore
+

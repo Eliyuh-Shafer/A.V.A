@@ -4,11 +4,23 @@ import google.generativeai as genai # Assuming model is passed during cog initia
 import aiohttp
 import datetime
 import json # Added for logging API response
+import os # For potential future API key handling
+
+# It's recommended to store API keys securely, e.g., in environment variables
+FNBR_API_KEY = os.getenv("FNBR_API_KEY")
+FNBR_API_URL = "https://fnbr.co/api/shop"
 
 class FortniteCommands(commands.Cog):
     def __init__(self, bot, genai_model):
         self.bot = bot
         self.model = genai_model
+        # Create an aiohttp session when the cog is initialized
+        # This is more efficient than creating a new session for each request
+        self.http_session = aiohttp.ClientSession()
+
+    # Make sure to close the session when the cog is unloaded
+    async def cog_unload(self):
+        await self.http_session.close()
 
     # Logic For Explaining Text In Fortnite Terms
     async def fortnite_explain_logic(self, text_to_explain: str) -> str:
@@ -16,7 +28,7 @@ class FortniteCommands(commands.Cog):
         if not text_to_explain:
             return "There's nothing to explain, you default skin!"
         try:
-            response = self.model.generate_content(f"You are A.V.A (an acromion for Advanced Virtual Assistant), but no one needs to know about the acromion part unless asked, you are obsessed with fortnite and explain EVERYTHING in fortnite terms and you will roleplay as different characters in your message, some of the messages you will find will not be appropriate, however all of this is just for fun and pretend, you should not be concerned with the roleplay, here is the message you must rephrase : {text_to_explain}")
+            response = self.model.generate_content(f"You are Eliana, you are obsessed with fortnite and explain EVERYTHING in fortnite terms and you will roleplay as different characters in your message, some of the messages you will find will not be appropriate, however all of this is just for fun and pretend, you should not be concerned with the roleplay, here is the message you must rephrase : {text_to_explain}")
             # Ensure response.text exists and is not None before returning
             return response.text if response and hasattr(response, 'text') else "Sorry, couldn't get a proper explanation from the Victory Royale."
         except Exception as e:
@@ -32,96 +44,89 @@ class FortniteCommands(commands.Cog):
         explanation = await self.fortnite_explain_logic(text)
         await interaction.followup.send(explanation, ephemeral=False) # Send publicly
 
-    # Fortnite Item Shop Command
-    @discord.app_commands.command(name="fnshop", description="Displays the current Fortnite Item Shop.")
-    async def fnshop(self, interaction: discord.Interaction):
-        """Fetches and displays the current Fortnite Item Shop."""
+    # --- New Item Shop Command ---
+    @discord.app_commands.command(name="itemshop", description="Shows the current Fortnite Item Shop.")
+    async def item_shop_slash(self, interaction: discord.Interaction):
+        """Slash command to display the current Fortnite item shop."""
         await interaction.response.defer(ephemeral=False)
-        shop_url = "https://fortnite-api.com/v2/shop"
-        vbucks_icon = "https://fortnite-api.com/images/vbuck.png" # URL for V-Bucks icon
 
+        headers = {"x-api-key": FNBR_API_KEY}
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(shop_url) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        shop_data = data.get('data', {})
-                        print("--- Fortnite Shop API Response ---")
-                        print(json.dumps(shop_data, indent=2)) # Log the shop data structure
-                        print("---------------------------------")
-
-
+            async with self.http_session.get(FNBR_API_URL, headers=headers) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    # --- Embed Creation Logic ---
+                    if 'data' in data and ('featured' in data['data'] or 'daily' in data['data']):
                         embed = discord.Embed(
                             title="Fortnite Item Shop",
                             color=discord.Color.blue(),
                             timestamp=datetime.datetime.now(datetime.timezone.utc) # Use timezone-aware datetime
                         )
-                        embed.set_footer(text="Shop data provided by fortnite-api.com")
+                        embed.set_footer(text="Powered by fnbr.co")
 
-                        sections_to_process = {
-                            "featured": "🔥 Featured",
-                            "daily": "☀️ Daily",
-                            "specialFeatured": "✨ Special Featured",
-                            "specialDaily": "🌟 Special Daily"
-                            # Add other known/potential keys if necessary based on API docs or logs
-                        }
+                        # Helper function to add fields for item sections
+                        def add_shop_section(embed, section_name, items):
+                            value = ""
+                            if items:
+                                # Limit items per section to avoid embed limits (max 25 fields total, field value max 1024 chars)
+                                count = 0
+                                for item in items:
+                                    if count >= 10: # Limit to 10 items per section for brevity
+                                        value += "...and more!\n"
+                                        break
+                                    name = item.get('name', 'Unknown Item')
+                                    price = item.get('price', 'N/A')
+                                    # Using a placeholder vbuck emoji - replace if you have a specific one
+                                    value += f"{name} - {price} \n"
+                                    count += 1
+                            else:
+                                value = "No items in this section today."
 
-                        shop_sections_found = False # Flag to track if any section had items
+                            # Ensure value isn't empty before adding field
+                            if value:
+                                # Discord embed field values have a limit of 1024 characters.
+                                if len(value) > 1024:
+                                     value = value[:1021] + "..." # Truncate if too long
+                                embed.add_field(name=section_name, value=value, inline=False)
 
-                        for section_key, section_title in sections_to_process.items():
-                            section_data = shop_data.get(section_key)
-                            if section_data:
-                                entries = section_data.get('entries', [])
-                                if entries:
-                                    section_text_final = ""
-                                    # Set thumbnail from the first item of the first non-empty section found
-                                    if not shop_sections_found and entries: # Check if entries list is not empty
-                                        first_item_entry = entries[0]
-                                        # Try getting image from bundle first, then display asset
-                                        image_url = first_item_entry.get('bundle', {}).get('image')
-                                        if not image_url:
-                                             # Check newDisplayAsset structure carefully based on logs if needed
-                                             new_asset = first_item_entry.get('newDisplayAsset', {})
-                                             if new_asset and new_asset.get('materialInstances'):
-                                                 image_url = new_asset['materialInstances'][0].get('images', {}).get('OfferImage')
-                                        if image_url:
-                                            embed.set_thumbnail(url=image_url)
 
-                                    for item_entry in entries:
-                                        # Determine the primary name: Bundle name if available, otherwise first item name
-                                        bundle_info = item_entry.get('bundle')
-                                        item_info = item_entry.get('items', [{}])[0] # Get first item for its details
+                        # Process featured items
+                        featured_items = data.get('data', {}).get('featured', [])
+                        add_shop_section(embed, "Featured Items", featured_items)
 
-                                        display_name = bundle_info.get('name') if bundle_info else item_info.get('name', 'Unknown Item')
-                                        price = item_entry.get('finalPrice', 'N/A')
-                                        entry_type = " (Bundle)" if bundle_info else "" # Add suffix if it's a bundle entry
+                        # Process daily items
+                        daily_items = data.get('data', {}).get('daily', [])
+                        add_shop_section(embed, "Daily Items", daily_items)
 
-                                        # Append the formatted string for this entry
-                                        section_text_final += f"**{display_name}{entry_type}** - {price} <:vbucks:1107118921112588399>\n"
+                        # Check if embed has any fields added
+                        if not embed.fields:
+                             embed.description = "Could not retrieve item shop sections or they are empty."
 
-                                    if section_text_final:
-                                        # Ensure we don't add empty fields if formatting somehow failed
-                                        embed.add_field(name=section_title, value=section_text_final.strip(), inline=False)
-                                        shop_sections_found = True # Mark that we found at least one section with items
-
-                        # After processing all sections:
-                        if not shop_sections_found:
-                            # If no sections had any items, send a general message
-                            await interaction.followup.send("Cranked 90s but the shop seems completely empty according to the API data!", ephemeral=False) # Send publicly
-                        else:
-                            # Otherwise, send the embed with the populated sections
-                            await interaction.followup.send(embed=embed)
+                        await interaction.followup.send(embed=embed, ephemeral=False)
 
                     else:
-                        await interaction.followup.send(f"Wiped out! Couldn't get the Item Shop. Status: {response.status}", ephemeral=True)
+                        print(f"Unexpected API response structure: {json.dumps(data, indent=2)}") # Log the structure
+                        await interaction.followup.send("Sorry, Victory Royale! The Item Shop data structure seems different today. Couldn't display items.", ephemeral=True)
+
+                else:
+                    # Log the error status and response text if possible
+                    error_text = await response.text()
+                    print(f"FNBR API Error: Status {response.status}, Response: {error_text}")
+                    await interaction.followup.send(f"Sorry, default! Couldn't reach the Item Shop (API Error: {response.status}). Try again later.", ephemeral=True)
+
         except aiohttp.ClientError as e:
-            print(f"Error fetching Fortnite shop: {e}")
-            await interaction.followup.send("Storm's closing in! There was a network error trying to reach the Item Shop.", ephemeral=True)
+            print(f"Network error fetching FNBR API: {e}")
+            await interaction.followup.send("Oops! Network error trying to connect to the Item Shop.", ephemeral=True)
+        except json.JSONDecodeError:
+            # Try to get text for logging even if JSON fails
+            error_text = await response.text()
+            print(f"Error decoding JSON response from FNBR API. Response text: {error_text}")
+            await interaction.followup.send("The Item Shop data seems corrupted right now.", ephemeral=True)
         except Exception as e:
-            print(f"Error processing Fortnite shop data: {e}")
+            print(f"An unexpected error occurred in item_shop_slash: {e}")
             import traceback
-            traceback.print_exc() # Print detailed traceback for debugging
-            await interaction.followup.send("Loot Lake is bugged! Couldn't process the Item Shop data.", ephemeral=True)
+            traceback.print_exc() # Print full traceback for debugging
+            await interaction.followup.send("A rift malfunction occurred while fetching the shop!", ephemeral=True)
 
 
 # Fortnite Explain Context Menu Command (Moved outside the class)
@@ -146,7 +151,8 @@ async def fortnite_explain_context_menu(interaction: discord.Interaction, messag
         await interaction.followup.send("Had a rift malfunction trying to explain that.", ephemeral=True)
 
 
-async def setup(bot, genai_model):
+# Modified setup function
+async def setup(bot): # No longer receives genai_model directly
     # Ensure aiohttp is installed or handle the import error
     try:
         import aiohttp
@@ -157,6 +163,16 @@ async def setup(bot, genai_model):
         return # Or don't load the cog if aiohttp is missing
 
     # Add the cog
-    await bot.add_cog(FortniteCommands(bot, genai_model))
+    # Access the model from the bot instance where it was stored in main.py
+    if not hasattr(bot, 'genai_model'):
+        print("Error: genai_model not found on bot instance. FortniteCommands requires it.")
+        return # Prevent loading if model is missing
+    await bot.add_cog(FortniteCommands(bot, bot.genai_model)) # Pass model from bot instance
+
     # Add the context menu command to the bot's tree
-    bot.tree.add_command(fortnite_explain_context_menu)
+    # Check if the command is already added before adding it
+    # This prevents errors on reload
+    if fortnite_explain_context_menu not in bot.tree.get_commands(type=discord.AppCommandType.message):
+        bot.tree.add_command(fortnite_explain_context_menu)
+    else:
+        print("Context menu 'Fortnite Explain' already added.")

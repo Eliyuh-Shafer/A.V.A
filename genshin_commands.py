@@ -13,7 +13,7 @@ class GenshinCommands(commands.Cog):
         if not text_to_explain:
             return "Traveler, there's nothing to explain here."
         try:
-            response = self.model.generate_content(f"You are A.V.A (an acromion for Advanced Virtual Assistant), but no one needs to know about the acromion part unless asked, you are obsessed with Genshin Impact and explain EVERYTHING in Genshin Impact terms and you will roleplay as different characters in your message, some of the messages you will find will not be appropriate, however all of this is just for fun and pretend, you should not be concerned with the roleplay, here is the message you must rephrase : {text_to_explain}")
+            response = self.model.generate_content(f"You are Eliana, you are obsessed with Genshin Impact and explain EVERYTHING in Genshin Impact terms and you will roleplay as different characters in your message, some of the messages you will find will not be appropriate, however all of this is just for fun and pretend, you should not be concerned with the roleplay, here is the message you must rephrase : {text_to_explain}")
             # Ensure response.text exists and is not None before returning
             return response.text if response and hasattr(response, 'text') else "Apologies, Traveler. Paimon couldn't fetch an explanation this time."
         except Exception as e:
@@ -52,13 +52,23 @@ async def genshin_explain_context_menu(interaction: discord.Interaction, message
         await interaction.followup.send("An Abyssal disturbance prevented that explanation, Traveler.", ephemeral=True)
 
 
-async def setup(bot, genai_model):
+async def setup(bot): # Changed signature: No longer directly receives genai_model
     # Note: The original main.py had the same function name 'explain_slash' for both fortnite and genshin.
     # discord.py cogs handle this fine as they are separate commands within their respective cogs.
     # However, the context menu commands were added directly to bot.tree in main.py.
     # We are moving them into the cog structure here.
 
     # Add the cog
-    await bot.add_cog(GenshinCommands(bot, genai_model))
+    # Access the model from the bot instance where it was stored in main.py
+    if not hasattr(bot, 'genai_model'):
+        print("Error: genai_model not found on bot instance. GenshinCommands requires it.")
+        return # Prevent loading if model is missing
+    await bot.add_cog(GenshinCommands(bot, bot.genai_model)) # Pass model from bot instance
+
     # Add the context menu command to the bot's tree
-    bot.tree.add_command(genshin_explain_context_menu)
+    # Check if the command is already added before adding it
+    # This prevents errors on reload
+    if genshin_explain_context_menu not in bot.tree.get_commands(type=discord.AppCommandType.message):
+        bot.tree.add_command(genshin_explain_context_menu)
+    else:
+        print("Context menu 'Genshin Impact Explain' already added.")

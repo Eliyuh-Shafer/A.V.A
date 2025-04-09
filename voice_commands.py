@@ -69,8 +69,20 @@ class VoiceCommands(commands.Cog):
                  log.error(f"Error removing pre-downloaded file {predownloaded_file}: {e}")
 
 
-    async def _play_song(self, guild_id: int, link: str, interaction_channel: Optional[discord.TextChannel] = None):
-        """Downloads (or uses pre-downloaded) and plays a single song."""
+    async def _play_song(self, guild_id: int, link: str, interaction_channel: Optional[discord.TextChannel] = None, previous_track_path: Optional[str] = None):
+        """Downloads (or uses pre-downloaded) and plays a single song. Deletes previous track's file."""
+
+        # --- Delete Previous Track File ---
+        if previous_track_path and os.path.exists(previous_track_path):
+            try:
+                os.remove(previous_track_path)
+                log.info(f"Deleted previous track file for guild {guild_id}: {previous_track_path}")
+            except OSError as e:
+                log.error(f"Error deleting previous track file {previous_track_path} for guild {guild_id}: {e}")
+        elif previous_track_path:
+            log.warning(f"Tried to delete previous track file for guild {guild_id}, but it didn't exist: {previous_track_path}")
+
+        # --- Existing Logic ---
         # Cancel any existing pre-download for *this* guild before starting playback/new download
         await self._cancel_predownload(guild_id)
 
@@ -181,9 +193,10 @@ class VoiceCommands(commands.Cog):
             audio_source = discord.FFmpegPCMAudio(downloaded_file)
             # Store the link of the track being played
             self.current_track[guild_id] = link
-            # Use lambda to pass guild_id to the after callback handler
-            voice_client.play(audio_source, after=lambda e: self.bot.loop.create_task(self._after_playing(guild_id, e)))
-            log.info(f"Started playing {downloaded_file} in guild {guild_id}")
+            # Use lambda to pass guild_id and the path of the *current* file to the after callback handler
+            current_file_path = downloaded_file
+            voice_client.play(audio_source, after=lambda e: self.bot.loop.create_task(self._after_playing(guild_id, current_file_path, e))) # Pass path of song *just played*
+            log.info(f"Started playing {current_file_path} in guild {guild_id}")
 
             # --- Trigger Pre-download for the NEXT song ---
             self.bot.loop.create_task(self._trigger_predownload(guild_id))
@@ -289,10 +302,13 @@ class VoiceCommands(commands.Cog):
              pass
 
 
-    async def _after_playing(self, guild_id: int, error: Optional[Exception]):
+    async def _after_playing(self, guild_id: int, finished_track_path: Optional[str], error: Optional[Exception]):
         """Callback run after a song finishes playing. Plays the next song if available."""
+        # --- REMOVED Deletion Logic from here ---
+
+        # --- Original Logic ---
         # Clear current track info *before* starting next song
-        current_finished_link = self.current_track.pop(guild_id, None)
+        current_finished_link = self.current_track.pop(guild_id, None) # Keep link tracking for queue display etc.
         log.info(f"Cleared current track info for guild {guild_id} (was: {current_finished_link})")
 
         if error:
@@ -314,11 +330,21 @@ class VoiceCommands(commands.Cog):
                      if channel.permissions_for(guild.me).send_messages:
                          announce_channel = channel
                          break
-            await self._play_song(guild_id, next_link, interaction_channel=announce_channel)
+            # Pass the finished_track_path to the next _play_song call
+            await self._play_song(guild_id, next_link, interaction_channel=announce_channel, previous_track_path=finished_track_path)
         else:
             log.info(f"Queue empty for guild {guild_id}. Playback stopped.")
-            # Queue is empty, ensure pre-download is cancelled
-            await self._cancel_predownload(guild_id)
+            # --- Delete the VERY LAST track file when queue is empty ---
+            if finished_track_path and os.path.exists(finished_track_path):
+                try:
+                    os.remove(finished_track_path)
+                    log.info(f"Deleted final track file for guild {guild_id}: {finished_track_path}")
+                except OSError as e:
+                    log.error(f"Error deleting final track file {finished_track_path} for guild {guild_id}: {e}")
+            elif finished_track_path:
+                 log.warning(f"Tried to delete final track file for guild {guild_id}, but it didn't exist: {finished_track_path}")
+
+            await self._cancel_predownload(guild_id) # Cancel pre-download when stopping
             # Optionally, implement auto-disconnect after inactivity here
 
 
@@ -433,8 +459,8 @@ class VoiceCommands(commands.Cog):
             log.info(f"Nothing playing in guild {guild_id}, starting playback immediately.")
             # Pop the link we just added (or the first one if others were added concurrently)
             next_link = queue.popleft()
-            # Start playing - pass ctx.channel for announcements
-            await self._play_song(guild_id, next_link, interaction_channel=ctx.channel)
+            # Start playing - pass ctx.channel for announcements, no previous track path for initial play
+            await self._play_song(guild_id, next_link, interaction_channel=ctx.channel, previous_track_path=None)
         else:
              log.info(f"Already playing/paused in guild {guild_id}, song remains queued.")
 

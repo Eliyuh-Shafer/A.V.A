@@ -1,5 +1,7 @@
-# Ava
+# Eliana (Fromerly AVA
 
 A personal project of yours truly..
 
-Ava is a discord bot coded in Python that I made for myself to be able to put together and taken apart and changed for what I need, when I need it.
+Eliana is a discord bot made for my partners discord server, most of her functions are hard coded to channels, this isnt meant to be ran outside of that server
+
+use at your own risk.

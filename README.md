@@ -1,4 +1,4 @@
-# Eliana (Fromerly AVA
+# Eliana (Formerly AVA)
 
 A personal project of yours truly..
 
